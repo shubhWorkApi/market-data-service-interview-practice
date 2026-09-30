@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Data Service</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; color: #222; }
+        header { background: #172033; color: white; padding: 16px 24px; }
+        main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 8px #0001; }
+        input, button, select { padding: 9px; margin: 5px; }
+        button { cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: right; }
+        th:first-child, td:first-child { text-align: left; }
+        .positive { color: green; } .negative { color: red; }
+        #app { display: none; }
+        #status { margin: 10px 0; }
+    </style>
+</head>
+<body>
+<header><h2>Market Data Service</h2></header>
+
+<main>
+    <section id="login" class="card">
+        <h3>Login</h3>
+        <input id="username" placeholder="Username" value="admin">
+        <input id="password" type="password" placeholder="Password" value="admin">
+        <button onclick="login()">Login</button>
+        <div id="loginMessage"></div>
+    </section>
+
+    <section id="app">
+        <div class="card">
+            <h3>Market Overview</h3>
+            <button onclick="loadMarkets()">Refresh</button>
+            <table>
+                <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Last Price</th>
+                    <th>24h Change %</th>
+                    <th>24h Volume</th>
+                </tr>
+                </thead>
+                <tbody id="marketBody"></tbody>
+            </table>
+        </div>
+
+        <div class="card">
+            <h3>Live Order Book</h3>
+            <select id="symbolSelect"></select>
+            <button onclick="subscribeOrderBook()">Subscribe</button>
+            <div id="status">Not connected</div>
+
+            <table>
+                <thead><tr><th colspan="2">Bids</th><th colspan="2">Asks</th></tr></thead>
+                <tbody id="bookBody"></tbody>
+            </table>
+        </div>
+    </section>
+</main>
+
+<script>
+    let socket;
+    const clientId = crypto.randomUUID();
+
+    async function login() {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('login').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+            loadMarkets();
+            setInterval(loadMarkets, 10000);
+        } else {
+            document.getElementById('loginMessage').textContent = result.message;
+        }
+    }
+
+    async function loadMarkets() {
+        const response = await fetch('/api/markets');
+        const markets = await response.json();
+
+        const body = document.getElementById('marketBody');
+        const select = document.getElementById('symbolSelect');
+
+        body.innerHTML = '';
+        select.innerHTML = '';
+
+        markets.forEach(market => {
+            const row = document.createElement('tr');
+            const changeClass = market.change24h >= 0 ? 'positive' : 'negative';
+
+            row.innerHTML = `
+                <td>${market.symbol}</td>
+                <td>${market.lastPrice}</td>
+                <td class="${changeClass}">${market.change24h.toFixed(2)}%</td>
+                <td>${market.volume24h}</td>
+            `;
+
+            body.appendChild(row);
+
+            const option = document.createElement('option');
+            option.value = market.symbol;
+            option.textContent = market.symbol;
+            select.appendChild(option);
+        });
+    }
+
+    function subscribeOrderBook() {
+        const symbol = document.getElementById('symbolSelect').value;
+
+        if (socket) {
+            socket.close();
+        }
+
+        socket = new WebSocket(
+            `ws://${location.host}/ws/market?clientId=${clientId}`
+        );
+
+        socket.onopen = () => {
+            document.getElementById('status').textContent =
+                `Connected - ${symbol}`;
+
+            socket.send(JSON.stringify({symbol}));
+        };
+
+        socket.onmessage = event => {
+            renderOrderBook(JSON.parse(event.data));
+        };
+
+        socket.onclose = () => {
+            document.getElementById('status').textContent = 'Disconnected';
+        };
+
+        socket.onerror = () => {
+            document.getElementById('status').textContent = 'WebSocket error';
+        };
+    }
+
+    function renderOrderBook(book) {
+        const body = document.getElementById('bookBody');
+        const rows = Math.max(book.bids.length, book.asks.length);
+
+        body.innerHTML = '';
+
+        for (let i = 0; i < rows; i++) {
+            const bid = book.bids[i];
+            const ask = book.asks[i];
+
+            const row = document.createElement('tr');
+
+            row.innerHTML = `
+                <td>${bid ? bid.price : ''}</td>
+                <td>${bid ? bid.quantity : ''}</td>
+                <td>${ask ? ask.price : ''}</td>
+                <td>${ask ? ask.quantity : ''}</td>
+            `;
+
+            body.appendChild(row);
+        }
+    }
+</script>
+</body>
+</html>
